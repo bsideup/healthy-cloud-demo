@@ -1,0 +1,57 @@
+Parameters:
+  CertificateArn:
+    Type: String
+
+  Subnets:
+    Type: List<AWS::EC2::Subnet::Id>
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+
+  Scheme:
+    Type: String
+    AllowedValues: ["internet-facing", "internal" ]
+    Default: internet-facing
+
+Outputs:
+  SecureListener:
+    Value: !Ref SecureListener
+  DNSName:
+    Value: !GetAtt LoadBalancer.DNSName
+  CanonicalHostedZoneID:
+    Value: !GetAtt LoadBalancer.CanonicalHostedZoneID
+
+Resources:
+  ELBInboundSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow inbound HTTP from the world.
+      SecurityGroupIngress: [
+          { IpProtocol: "tcp", FromPort: "80", ToPort: "80", CidrIp: "0.0.0.0/0" },
+          { IpProtocol: "tcp", FromPort: "443", ToPort: "443", CidrIp: "0.0.0.0/0" }
+      ]
+      VpcId: !Ref VpcId
+
+  IndexTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref VpcId
+
+  SecureListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      Certificates: [{ CertificateArn: !Ref CertificateArn }]
+      DefaultActions: [{ TargetGroupArn: !Ref IndexTargetGroup, Type: forward }]
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 443
+      Protocol: HTTPS
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: !Ref Scheme
+      SecurityGroups: [ !GetAtt ELBInboundSecurityGroup.GroupId ]
+      Subnets: !Ref Subnets
+

@@ -1,0 +1,124 @@
+Parameters:
+  Env:
+    Type: String
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+
+  Subnets:
+    Type: List<AWS::EC2::Subnet::Id>
+
+Mappings:
+    AWSRegionToAMI:
+        us-east-2:
+            AMI: ami-67ab9e02
+        us-east-1:
+            AMI: ami-5e414e24
+        us-west-2:
+            AMI: ami-10ed6968
+        us-west-1:
+            AMI: ami-00898660
+        eu-west-3:
+            AMI: ami-6fa21412
+        eu-west-2:
+            AMI: ami-42a64325
+        eu-west-1:
+            AMI: ami-880d64f1
+        eu-central-1:
+            AMI: ami-63cbae0c
+        ap-northeast-2:
+            AMI: ami-0acc6e64
+        ap-northeast-1:
+            AMI: ami-e3166185
+        ap-southeast-2:
+            AMI: ami-36867d54
+        ap-southeast-1:
+            AMI: ami-66c98f1a
+        ca-central-1:
+            AMI: ami-4b9c182f
+        ap-south-1:
+            AMI: ami-ca8ad9a5
+        sa-east-1:
+            AMI: ami-69f7b805
+
+Resources:
+  BastionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument: |
+        {
+            "Statement": [{
+                "Effect": "Allow",
+                "Principal": { "Service": [ "ec2.amazonaws.com" ]},
+                "Action": [ "sts:AssumeRole" ]
+            }]
+        }
+      Policies:
+        - PolicyName: inline
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: "*"
+                # Don't do this in real environments, mkay?
+                Resource: "*"
+
+  EC2InstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      Roles:
+        - !Ref BastionRole
+
+  BastionSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: Allow SSH to Bastion instance
+      SecurityGroupIngress:
+      - { IpProtocol: tcp, FromPort: '22', ToPort: '22', CidrIp: 0.0.0.0/0 }
+      VpcId: !Ref VpcId
+
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier: !Ref Subnets
+      LaunchConfigurationName: !Ref LaunchConfiguration
+      MinSize: 1
+      DesiredCapacity: 1
+      MaxSize: 2
+      Tags:
+        - { Key: "Name", Value: "bastion", PropagateAtLaunch: true }
+        - { Key: "environment", Value: !Ref Env, PropagateAtLaunch: true }
+    CreationPolicy:
+      ResourceSignal:
+        Count: 1
+        Timeout: PT15M
+    UpdatePolicy:
+      AutoScalingReplacingUpdate:
+        WillReplace: true
+
+  LaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId:  !FindInMap [AWSRegionToAMI, !Ref "AWS::Region", AMI]
+      AssociatePublicIpAddress: true
+      InstanceType: t2.nano
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      SecurityGroups:
+        - !Ref BastionSecurityGroup
+      UserData:
+        "Fn::Base64": !Sub |
+          #!/bin/bash -xe
+          yum install -y aws-cfn-bootstrap aws-cli docker jq
+          service docker start
+          rpm -i https://s3-eu-west-1.amazonaws.com/widdix-aws-ec2-ssh-releases-eu-west-1/aws-ec2-ssh-1.6.0-1.el7.centos.noarch.rpm
+
+          cat > /etc/aws-ec2-ssh.conf << EOF
+          IAM_AUTHORIZED_GROUPS="admins"
+          LOCAL_MARKER_GROUP="iam-synced-users"
+          LOCAL_GROUPS="docker"
+          SUDOERS_GROUPS="admins"
+          EOF
+
+          /usr/bin/import_users.sh
+          /opt/aws/bin/cfn-signal -e $? --region ${AWS::Region} --stack ${AWS::StackName} --resource AutoScalingGroup

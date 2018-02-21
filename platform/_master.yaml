@@ -1,0 +1,103 @@
+Parameters:
+  InstanceType:
+    Type: String
+    AllowedValues: ["t2.medium", "t2.large", "m3.medium", "c4.large", "c4.xlarge"]
+    Default: t2.large
+
+  CertificateArn:
+    Type: String
+
+  InternalDomain:
+    Type: String
+
+Outputs:
+  Subnets:
+    Value: !GetAtt VPC.Outputs.Subnets
+    Export:
+      Name: !Sub ${AWS::StackName}-Subnets
+  VpcId:
+    Value: !GetAtt VPC.Outputs.VpcId
+    Export:
+      Name: !Sub ${AWS::StackName}-VpcId
+  ECSCluster:
+    Value: !GetAtt ECS.Outputs.ECSCluster
+    Export:
+      Name: !Sub ${AWS::StackName}-ECSCluster
+  PublicListener:
+    Value: !GetAtt PublicLB.Outputs.SecureListener
+    Export:
+      Name: !Sub ${AWS::StackName}-PublicListener
+  InternalListener:
+    Value: !GetAtt InternalLB.Outputs.SecureListener
+    Export:
+      Name: !Sub ${AWS::StackName}-InternalListener
+
+Resources:
+  VPC:
+    Type: "AWS::CloudFormation::Stack"
+    Properties:
+      TemplateURL: ./vpc.yaml
+
+  Bastion:
+    Type: "AWS::CloudFormation::Stack"
+    Properties:
+      Parameters:
+        Env: !Sub ${AWS::StackName}
+        VpcId: !GetAtt VPC.Outputs.VpcId
+        Subnets: !GetAtt VPC.Outputs.Subnets
+      TemplateURL: ./bastion.yaml
+
+  ECS:
+    Type: "AWS::CloudFormation::Stack"
+    Properties:
+      Parameters:
+        SubnetID: !GetAtt VPC.Outputs.Subnets
+        InstanceType: !Ref InstanceType
+      TemplateURL: ./ecs-cluster.yaml
+
+  ECSDrainer:
+    Type: "AWS::CloudFormation::Stack"
+    Properties:
+      Parameters:
+        ECSCluster: !GetAtt ECS.Outputs.ECSCluster
+        AutoScalingGroup: !GetAtt ECS.Outputs.AutoScalingGroup
+      TemplateURL: ./ecs-drainer/template.yaml
+
+  PublicLB:
+    Type: "AWS::CloudFormation::Stack"
+    Properties:
+      Parameters:
+        CertificateArn: !Ref CertificateArn
+        Subnets: !GetAtt VPC.Outputs.Subnets
+        VpcId: !GetAtt VPC.Outputs.VpcId
+        Scheme: internet-facing
+      TemplateURL: ./loadbalancer.yaml
+
+  InternalLB:
+    Type: "AWS::CloudFormation::Stack"
+    Properties:
+      Parameters:
+        CertificateArn: !Ref CertificateArn
+        Subnets: !GetAtt VPC.Outputs.Subnets
+        VpcId: !GetAtt VPC.Outputs.VpcId
+        Scheme: internal
+      TemplateURL: ./loadbalancer.yaml
+
+  DNSPrivateZone:
+    Type: "AWS::Route53::HostedZone"
+    Properties:
+      HostedZoneConfig:
+        Comment: !Sub "Private HostedZone for ${AWS::StackName}"
+      Name: !Ref "InternalDomain"
+      VPCs:
+        - { VPCId: !GetAtt VPC.Outputs.VpcId, VPCRegion: !Ref "AWS::Region" }
+
+  WildcardPrivateDNSRecordSet:
+    Type: "AWS::Route53::RecordSet"
+    Properties:
+      HostedZoneId: !Ref DNSPrivateZone
+      Name: !Sub "*.${InternalDomain}."
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt InternalLB.Outputs.DNSName
+        HostedZoneId: !GetAtt InternalLB.Outputs.CanonicalHostedZoneID

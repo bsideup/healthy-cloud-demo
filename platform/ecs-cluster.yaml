@@ -1,0 +1,131 @@
+Parameters:
+
+  SubnetID:
+    Type: List<AWS::EC2::Subnet::Id>
+
+  InstanceType:
+    Type: String
+    Default: t2.large
+
+  MinSize:
+    Type: Number
+    Default: 3
+
+  DesiredCapacity:
+    Type: Number
+    Default: 3
+
+  MaxSize:
+    Type: Number
+    Default: 5
+
+Outputs:
+  ECSCluster:
+    Value: !Ref ECSCluster
+
+  AutoScalingGroup:
+    Value: !Ref AutoScalingGroup
+
+Mappings:
+    # These are the latest ECS optimized AMIs as of Feb 2018:
+    #
+    #   amzn-ami-2017.09.h-amazon-ecs-optimized
+    #   ECS agent:    1.17.0
+    #   Docker:       17.09.1-ce
+    #   ecs-init:     1.17.0-2
+    #
+    # You can find the latest available on this page of our documentation:
+    # http://docs.aws.amazon.com/AmazonECS/latest/developerguide/ecs-optimized_AMI.html
+    # (note the AMI identifier is region specific)
+
+    AWSRegionToAMI:
+        us-east-2:
+            AMI: ami-67ab9e02
+        us-east-1:
+            AMI: ami-5e414e24
+        us-west-2:
+            AMI: ami-10ed6968
+        us-west-1:
+            AMI: ami-00898660
+        eu-west-3:
+            AMI: ami-6fa21412
+        eu-west-2:
+            AMI: ami-42a64325
+        eu-west-1:
+            AMI: ami-880d64f1
+        eu-central-1:
+            AMI: ami-63cbae0c
+        ap-northeast-2:
+            AMI: ami-0acc6e64
+        ap-northeast-1:
+            AMI: ami-e3166185
+        ap-southeast-2:
+            AMI: ami-36867d54
+        ap-southeast-1:
+            AMI: ami-66c98f1a
+        ca-central-1:
+            AMI: ami-4b9c182f
+        ap-south-1:
+            AMI: ami-ca8ad9a5
+        sa-east-1:
+            AMI: ami-69f7b805
+
+Resources:
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+
+  ECSRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument: |
+        {
+            "Statement": [{
+                "Effect": "Allow",
+                "Principal": { "Service": [ "ec2.amazonaws.com" ]},
+                "Action": [ "sts:AssumeRole" ]
+            }]
+        }
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref ECSRole
+
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier: !Ref SubnetID
+      LaunchConfigurationName: !Ref LaunchConfiguration
+      MinSize: !Ref MinSize
+      DesiredCapacity: !Ref DesiredCapacity
+      MaxSize: !Ref MaxSize
+    CreationPolicy:
+      ResourceSignal:
+        Count: !Ref MinSize
+        Timeout: PT15M
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: !Ref MinSize
+        MaxBatchSize: '1'
+        WaitOnResourceSignals: 'true'
+        PauseTime: PT10M
+
+  LaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId:  !FindInMap [AWSRegionToAMI, !Ref "AWS::Region", AMI]
+      AssociatePublicIpAddress: true
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      UserData:
+        "Fn::Base64": !Sub |
+          #!/bin/bash
+          yum install -y aws-cfn-bootstrap aws-cli
+          echo ECS_CLUSTER=${ECSCluster} > /etc/ecs/ecs.config
+          /opt/aws/bin/cfn-signal -e $? --region ${AWS::Region} --stack ${AWS::StackName} --resource AutoScalingGroup
+

@@ -1,0 +1,16 @@
+.DS_Store
+
+infrastructure.yaml
+
+*.pyc
+
+/services/*/build
+
+.gradle/
+
+.idea/
+*.iws
+*.ipr
+*.iml
+
+.vscode/

@@ -1,0 +1,17 @@
+plugins {
+	id "java"
+	id "org.springframework.boot" version "1.5.7.RELEASE"
+}
+
+jar.archiveName = "app.jar"
+
+repositories {
+	jcenter()
+}
+
+dependencies {
+	compile 'org.springframework.boot:spring-boot-starter-actuator'
+	compile 'org.springframework.boot:spring-boot-starter-web'
+
+	testCompile 'org.springframework.boot:spring-boot-starter-test'
+}
